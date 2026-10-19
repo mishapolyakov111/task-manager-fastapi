@@ -1,0 +1,51 @@
+x-app-env: &app-env
+  DATABASE_URL: postgresql+asyncpg://app:app@db:5432/tasks
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: tasks
+    ports: ["${DB_PORT:-5432}:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d tasks"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  migrate:
+    build: .
+    environment: *app-env
+    volumes: [".:/code"]
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$$(ls migrations/versions/*.py 2>/dev/null)" ]; then
+          alembic revision --autogenerate -m "create users and tasks"
+        fi
+        alembic upgrade head
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    environment: *app-env
+    ports: ["8000:8000"]
+    volumes: [".:/code"]
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
